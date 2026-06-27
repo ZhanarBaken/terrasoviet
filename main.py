@@ -38,7 +38,7 @@ def run(args) -> None:
     log.info(f"    Листов 1:100 000: {len(tiles)}")
 
     log.info("3/5 Извлечение легенды...")
-    legend_entries = legend.extract_legend(args.legend)
+    legend_entries = legend.extract_legend(args.legend, map_path=args.map)
     log.info(f"    Записей в легенде: {len(legend_entries)}")
 
     log.info("4/5 Сегментация карты (цвет + OCR)...")

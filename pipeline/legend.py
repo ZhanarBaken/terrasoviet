@@ -24,11 +24,15 @@ log = logging.getLogger(__name__)
 _HSV_TOL = np.array([12, 60, 60])
 
 
-def extract_legend(legend_path: str) -> list[dict]:
+def extract_legend(legend_path: str, map_path: str = None) -> list[dict]:
     """
-    Вход:  путь к legenda.jpg
+    Вход:  путь к legenda.jpg, опционально путь к map.jpg
     Выход: [{"name": str, "code": str, "color_hex": str,
               "hsv_lower": list, "hsv_upper": list}, ...]
+
+    Стратегия:
+      1. Пробует найти цветные swatches в легенде
+      2. Если нашёл мало (<5) — берёт доминирующие цвета прямо с карты (KMeans)
     """
     img = cv2.imread(legend_path)
     if img is None:
@@ -38,7 +42,12 @@ def extract_legend(legend_path: str) -> list[dict]:
     entries = _add_ocr_labels(img, entries)
     entries = _deduplicate(entries)
 
-    log.info(f"Легенда: найдено {len(entries)} записей")
+    if len(entries) < 5 and map_path:
+        log.warning(f"Легенда: найдено мало записей ({len(entries)}), "
+                    "переключаюсь на KMeans по карте")
+        entries = _kmeans_from_map(map_path)
+
+    log.info(f"Легенда: итого {len(entries)} записей")
     return entries
 
 
@@ -47,8 +56,8 @@ def _find_swatches(img: np.ndarray) -> list[dict]:
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     h_img, w_img = img.shape[:2]
 
-    # Маска: цветные пиксели (не белый/серый фон, не чёрные линии)
-    mask = cv2.inRange(hsv, (0, 20, 40), (179, 255, 245))
+    # Порог S>80 чтобы отсечь жёлтую бумагу (S~40-60)
+    mask = cv2.inRange(hsv, (0, 80, 80), (179, 255, 240))
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
 
@@ -154,3 +163,49 @@ def _deduplicate(entries: list[dict]) -> list[dict]:
         e.pop("_bbox", None)
 
     return unique
+
+
+def _kmeans_from_map(map_path: str, n_colors: int = 30) -> list[dict]:
+    """
+    Fallback: находит n доминирующих цветов прямо на карте через KMeans.
+    Фильтрует фоновые (малонасыщенные) цвета.
+    """
+    from sklearn.cluster import KMeans
+
+    img = cv2.imread(map_path)
+    if img is None:
+        return []
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+    pixels = hsv.reshape(-1, 3).astype(float)
+    # Сэмплируем для скорости
+    idx = np.random.choice(len(pixels), min(80000, len(pixels)), replace=False)
+    sample = pixels[idx]
+
+    km = KMeans(n_clusters=n_colors, random_state=42, n_init=5)
+    km.fit(sample)
+
+    entries = []
+    for center in km.cluster_centers_:
+        h, s, v = center
+        # Пропускаем малонасыщенные (фон бумаги)
+        if s < 45 or v < 60:
+            continue
+
+        median_hsv = np.array([h, s, v])
+        lower = np.clip(median_hsv - _HSV_TOL, [0, 0, 0], [179, 255, 255]).astype(np.uint8)
+        upper = np.clip(median_hsv + _HSV_TOL, [0, 0, 0], [179, 255, 255]).astype(np.uint8)
+
+        bgr = cv2.cvtColor(np.uint8([[[int(h), int(s), int(v)]]]), cv2.COLOR_HSV2BGR)[0][0]
+        hex_color = "#{:02x}{:02x}{:02x}".format(int(bgr[2]), int(bgr[1]), int(bgr[0]))
+
+        entries.append({
+            "name": hex_color,
+            "code": "",
+            "color_hex": hex_color,
+            "hsv_lower": lower.tolist(),
+            "hsv_upper": upper.tolist(),
+        })
+
+    log.info(f"KMeans: {len(entries)} цветных кластеров из {n_colors}")
+    return entries
