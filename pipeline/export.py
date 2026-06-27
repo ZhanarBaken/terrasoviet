@@ -31,7 +31,12 @@ def export_tiles(
         tiles      — из tiling.generate_tiles()
         output_dir — куда писать
     """
-    os.makedirs(output_dir, exist_ok=True)
+    tiles_dir  = os.path.join(output_dir, "tiles")
+    output_sub = os.path.join(output_dir, "output")
+    debug_dir  = os.path.join(output_dir, "debug")
+    os.makedirs(tiles_dir,  exist_ok=True)
+    os.makedirs(output_sub, exist_ok=True)
+    os.makedirs(debug_dir,  exist_ok=True)
 
     all_features = []
     errors = []
@@ -63,24 +68,22 @@ def export_tiles(
                 errors.append(str(e))
                 log.debug(f"Пропущен контур: {e}")
 
-    # Один GeoJSON на тайл
+    # Один GeoJSON на тайл → tiles/
     tile_map: dict[str, list] = {}
     for f in all_features:
         key = f["properties"]["sheet"]
         tile_map.setdefault(key, []).append(f)
 
     for tile_name, features in tile_map.items():
-        _save_geojson(features, os.path.join(output_dir, f"{tile_name}.geojson"))
+        _save_geojson(features, os.path.join(tiles_dir, f"{tile_name}.geojson"))
 
-    # Общий файл
-    _save_geojson(all_features, os.path.join(output_dir, "combined.geojson"))
+    # Итоговые файлы → output/
+    _save_geojson(all_features, os.path.join(output_sub, "combined.geojson"))
+    _save_shapefile(all_features, os.path.join(output_sub, "combined.shp"))
 
-    # Shapefile (опционально, если geopandas доступен)
-    _save_shapefile(all_features, os.path.join(output_dir, "combined.shp"))
-
-    # Лог ошибок
+    # Лог ошибок → debug/
     if errors:
-        with open(os.path.join(output_dir, "errors.log"), "w") as f:
+        with open(os.path.join(debug_dir, "errors.log"), "w") as f:
             f.write("\n".join(errors))
 
     log.info(
@@ -110,15 +113,30 @@ def _find_tile(lon: float, lat: float, tiles: list[dict]) -> str:
 def _save_shapefile(features: list, path: str) -> None:
     try:
         import geopandas as gpd
-        from shapely.geometry import shape
+        from shapely.geometry import shape, MultiPolygon
 
         if not features:
             return
-        gdf = gpd.GeoDataFrame(
-            [f["properties"] for f in features],
-            geometry=[shape(f["geometry"]) for f in features],
-            crs="EPSG:4326",
-        )
+
+        geoms = []
+        props = []
+        for f in features:
+            g = shape(f["geometry"])
+            # Shapefile требует только Polygon/MultiPolygon
+            if g.geom_type == "GeometryCollection":
+                polys = [p for p in g.geoms
+                         if p.geom_type in ("Polygon", "MultiPolygon")]
+                if not polys:
+                    continue
+                g = MultiPolygon(polys) if len(polys) > 1 else polys[0]
+            if g.geom_type not in ("Polygon", "MultiPolygon"):
+                continue
+            geoms.append(g)
+            props.append(f["properties"])
+
+        if not geoms:
+            return
+        gdf = gpd.GeoDataFrame(props, geometry=geoms, crs="EPSG:4326")
         gdf.to_file(path, driver="ESRI Shapefile", encoding="utf-8")
         log.info(f"Shapefile: {path}")
     except Exception as e:

@@ -1,1 +1,1 @@
-from . import georeference, tiling, legend, segment, export
+from . import georeference, tiling, preprocess, legend, segment, export
