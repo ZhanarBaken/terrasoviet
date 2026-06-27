@@ -26,7 +26,12 @@ def run(args) -> None:
     if not os.path.exists(args.map):
         log.error(f"Карта не найдена: {args.map}")
         sys.exit(1)
-    if not os.path.exists(args.legend):
+
+    # Если легенда не указана — ищем внутри карты
+    if args.legend is None:
+        log.info("--legend не указан, легенда будет искаться внутри карты")
+        args.legend = args.map
+    elif not os.path.exists(args.legend):
         log.error(f"Легенда не найдена: {args.legend}")
         sys.exit(1)
 
@@ -55,7 +60,9 @@ if __name__ == "__main__":
         description="TerraSoviet — векторизация советских геологических карт"
     )
     parser.add_argument("--map",    required=True, help="Путь к карте (.jpg/.png/.tif)")
-    parser.add_argument("--legend", required=True, help="Путь к легенде (.jpg/.png)")
+    parser.add_argument("--legend", default=None,
+                        help="Путь к легенде (.jpg/.png). "
+                             "Если не указан — легенда ищется внутри карты.")
     parser.add_argument("--output", required=True, help="Папка для GeoJSON")
     parser.add_argument(
         "--bbox", required=True, type=parse_bbox,

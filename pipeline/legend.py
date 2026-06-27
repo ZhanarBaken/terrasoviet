@@ -26,20 +26,35 @@ _HSV_TOL = np.array([12, 60, 60])
 
 def extract_legend(legend_path: str, map_path: str = None) -> list[dict]:
     """
-    Вход:  путь к legenda.jpg, опционально путь к map.jpg
+    Вход:  путь к легенде (отдельный файл ИЛИ совпадает с картой),
+           опционально путь к карте для fallback KMeans.
     Выход: [{"name": str, "code": str, "color_hex": str,
               "hsv_lower": list, "hsv_upper": list}, ...]
 
     Стратегия:
-      1. Пробует найти цветные swatches в легенде
-      2. Если нашёл мало (<5) — берёт доминирующие цвета прямо с карты (KMeans)
+      1. Если legend_path — отдельный файл: читаем его напрямую
+      2. Если legend_path == map_path (легенда внутри карты):
+         автоматически вырезаем блок легенды из углов карты
+      3. Если нашли мало swatches (<5): KMeans fallback по карте
     """
+    # Определяем источник легенды
+    same_file = (legend_path == map_path)
+
     img = cv2.imread(legend_path)
     if img is None:
-        raise FileNotFoundError(f"Не удалось загрузить легенду: {legend_path}")
+        raise FileNotFoundError(f"Не удалось загрузить: {legend_path}")
 
-    entries = _find_swatches(img)
-    entries = _add_ocr_labels(img, entries)
+    if same_file:
+        log.info("Легенда встроена в карту — ищу блок легенды автоматически")
+        legend_img = _detect_embedded_legend(img)
+        if legend_img is None:
+            log.warning("Блок легенды не найден, использую всю карту")
+            legend_img = img
+    else:
+        legend_img = img
+
+    entries = _find_swatches(legend_img)
+    entries = _add_ocr_labels(legend_img, entries)
     entries = _deduplicate(entries)
 
     if len(entries) < 5 and map_path:
@@ -49,6 +64,80 @@ def extract_legend(legend_path: str, map_path: str = None) -> list[dict]:
 
     log.info(f"Легенда: итого {len(entries)} записей")
     return entries
+
+
+def _detect_embedded_legend(img: np.ndarray) -> np.ndarray | None:
+    """
+    Находит блок легенды внутри карты.
+
+    Алгоритм (аналогично поиску внешней рамки):
+      1. Ищем длинные горизонтальные + вертикальные линии (структура таблицы/рамки)
+      2. Объединяем в блоки через дилатацию
+      3. Из блоков в углах карты выбираем самый светлый с цветными swatches
+    """
+    h, w = img.shape[:2]
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # Находим длинные линии (как в таблице легенды)
+    _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    k_h = cv2.getStructuringElement(cv2.MORPH_RECT, (w // 15, 1))
+    k_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, h // 15))
+    lines = cv2.bitwise_or(
+        cv2.morphologyEx(bw, cv2.MORPH_OPEN, k_h),
+        cv2.morphologyEx(bw, cv2.MORPH_OPEN, k_v),
+    )
+    # Дилатируем чтобы замкнуть прямоугольники
+    dilated = cv2.dilate(lines, np.ones((30, 30), np.uint8), iterations=2)
+    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    candidates = []
+    for c in contours:
+        area = cv2.contourArea(c)
+        # Легенда: 0.1–20% площади карты
+        if not (h * w * 0.001 < area < h * w * 0.20):
+            continue
+
+        x, y, cw, ch = cv2.boundingRect(c)
+
+        # Должна быть в одном из 4 углов (40% от края)
+        in_corner = (
+            (x < w * 0.40 or x + cw > w * 0.60) and
+            (y < h * 0.40 or y + ch > h * 0.60)
+        )
+        if not in_corner:
+            continue
+
+        roi = img[y:y + ch, x:x + cw]
+
+        # Светлый фон — легенда это бумага, не карта
+        brightness = cv2.mean(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY))[0]
+        if brightness < 150:
+            continue
+
+        # Число цветных swatches внутри
+        hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        color_mask = cv2.inRange(hsv_roi, (0, 40, 80), (179, 255, 255))
+        sw_cnts, _ = cv2.findContours(
+            color_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        swatch_count = sum(
+            1 for sc in sw_cnts
+            if cw * ch * 0.00005 < cv2.contourArea(sc) < cw * ch * 0.05
+        )
+
+        candidates.append((swatch_count, area, roi, x, y, cw, ch, brightness))
+        log.info(f"  Кандидат легенды: ({x},{y}) {cw}×{ch}px "
+                 f"bright={brightness:.0f} swatches={swatch_count}")
+
+    if not candidates:
+        return None
+
+    # Лучший = больше swatches, при равенстве — крупнее
+    candidates.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    best = candidates[0]
+    log.info(f"Легенда найдена в карте: ({best[3]},{best[4]}) "
+             f"{best[5]}×{best[6]}px swatches={best[0]}")
+    return best[2]
 
 
 def _find_swatches(img: np.ndarray) -> list[dict]:
