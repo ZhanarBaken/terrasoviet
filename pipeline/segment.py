@@ -22,6 +22,15 @@ _MIN_AREA_PX = 1000
 _BOUNDARY_DARK = 80        # пиксели темнее этого = граница (любого цвета)
 _LEGEND_CODES_PATH = "data/legend_codes.json"
 
+_easyocr_reader = None
+
+def _get_reader():
+    global _easyocr_reader
+    if _easyocr_reader is None:
+        import easyocr
+        _easyocr_reader = easyocr.Reader(["en"], gpu=False, verbose=False)
+    return _easyocr_reader
+
 
 def segment_map(image: np.ndarray, legend: list[dict]) -> list[dict]:
     """
@@ -145,10 +154,10 @@ def _extract_regions(image: np.ndarray, markers: np.ndarray, legend_codes: dict)
 # ── OCR ───────────────────────────────────────────────────────────────────
 
 def _ocr_region(image: np.ndarray, mask: np.ndarray) -> str:
-    """OCR геологического кода внутри региона."""
+    """OCR геологического кода внутри региона (EasyOCR)."""
     try:
-        import pytesseract
-    except ImportError:
+        reader = _get_reader()
+    except Exception:
         return ""
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -160,25 +169,24 @@ def _ocr_region(image: np.ndarray, mask: np.ndarray) -> str:
         return ""
 
     roi = image[y:y + h, x:x + w].copy()
-    roi[mask[y:y + h, x:x + w] == 0] = 255   # фон белый
+    roi[mask[y:y + h, x:x + w] == 0] = 255
 
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    # Масштабируем для лучшего OCR мелких надписей
+    # Масштабируем мелкие надписи
     scale = max(1, 60 // max(h, 1) + 1)
     if scale > 1:
         binary = cv2.resize(binary, None, fx=scale, fy=scale,
                             interpolation=cv2.INTER_CUBIC)
 
     try:
-        text = pytesseract.image_to_string(
-            binary, lang="rus", config="--psm 6"
-        ).strip()
+        results = reader.readtext(binary, detail=0, paragraph=False)
+        text = " ".join(results).strip()
     except Exception:
         return ""
 
-    match = re.search(r'[A-Za-zА-Яа-яοεδγβα][A-Za-z]*[\d]*', text)
+    match = re.search(r'[A-Za-zА-Яа-яοεδγβα][A-Za-z0-9]*', text)
     return match.group(0) if match else ""
 
 

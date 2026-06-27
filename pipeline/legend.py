@@ -103,19 +103,18 @@ def _find_swatches(img: np.ndarray) -> list[dict]:
 
 
 def _add_ocr_labels(img: np.ndarray, entries: list[dict]) -> list[dict]:
-    """OCR текста справа от каждого swatch: извлекает код и название формации."""
+    """OCR текста справа от каждого swatch (EasyOCR)."""
     try:
-        import pytesseract
-    except ImportError:
-        log.warning("pytesseract не установлен — OCR пропущен, используем hex-цвета как имена")
+        import easyocr
+        reader = easyocr.Reader(["en", "ru"], gpu=False, verbose=False)
+    except Exception:
+        log.warning("easyocr недоступен — OCR пропущен, используем hex-цвета как имена")
         return entries
 
     h_img, w_img = img.shape[:2]
-    ocr_cfg = "--psm 7 -l rus"
 
     for entry in entries:
         x, y, cw, ch = entry["_bbox"]
-        # Регион для OCR: справа от swatch, та же высота ± 2px
         tx = x + cw + 4
         tw = min(500, w_img - tx)
         ty = max(0, y - 2)
@@ -125,18 +124,17 @@ def _add_ocr_labels(img: np.ndarray, entries: list[dict]) -> list[dict]:
 
         roi = img[ty:ty + th, tx:tx + tw]
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        # Бинаризация для OCR
         _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
         try:
-            text = pytesseract.image_to_string(binary, config=ocr_cfg).strip()
+            results = reader.readtext(binary, detail=0, paragraph=True)
+            text = " ".join(results).strip()
         except Exception:
             continue
 
         if not text:
             continue
 
-        # Извлекаем геологический код (буква/цифры с индексами)
         code_match = re.search(r'[A-Za-zА-Яа-яёЁ]\d*[\^_]?\d*', text)
         entry["code"] = code_match.group(0) if code_match else ""
         entry["name"] = text
