@@ -66,16 +66,26 @@ terrasoviet/
 
 ### ЗЕЛЁНЫЙ — `georeference.py`, `tiling.py`, `legend.py` ✅
 
-Уже реализовано:
-- `georeference.build_transform(map_path, bbox)` — обрезает рамку карты, строит аффинную матрицу пиксель→WGS84
-- `tiling.generate_tiles(bbox)` — генерирует 144 листа 1:100 000 по советской номенклатуре
-- `legend.extract_legend(legend_path)` — находит цветные образцы в легенде, OCR названий
+**Прямо сейчас:**
+1. Запусти `legend.extract_legend('data/legenda.jpg')` — посмотри сколько цветов нашло и правильные ли названия
+2. Запусти полный pipeline командой ниже — посмотри что выходит в `results/`
+3. Если `combined.geojson` пустой или маленький — значит HSV диапазоны в `legend.py` надо расширить (увеличь `_HSV_TOL`)
+4. Открой `results/combined.geojson` в [geojson.io](https://geojson.io) — полигоны должны лежать в Казахстане
 
-Проверено: углы карты попадают точно в `69°E / 50°N` и `75°E / 46°N`.
+Реализовано:
+- `georeference.build_transform()` — обрезает рамку, строит матрицу пиксель→WGS84 (проверено, углы точные)
+- `tiling.generate_tiles()` — 144 листа 1:100 000 по советской номенклатуре
+- `legend.extract_legend()` — находит цветные образцы в легенде, OCR названий
 
 ---
 
 ### ФИОЛЕТОВЫЙ — `pipeline/segment.py`
+
+**Прямо сейчас:**
+1. `git clone https://github.com/ZhanarBaken/terrasoviet.git && pip install -r requirements.txt`
+2. Открой `pipeline/segment.py` — интерфейс уже задан, логика внутри требует доработки
+3. Запусти тест: `python main.py --map data/map.jpg --legend data/legenda.jpg --output results/ --bbox 46,69,50,75`
+4. Посмотри `results/combined.geojson` на geojson.io — если полигонов мало или они неточные, туни HSV диапазоны в `_clean_mask` и добавь SAM
 
 **Интерфейс уже задан, нужно улучшить логику внутри.**
 
@@ -117,6 +127,12 @@ def segment_map(image: np.ndarray, legend: list[dict]) -> list[dict]:
 ---
 
 ### ОРАНЖЕВЫЙ — `pipeline/export.py`
+
+**Прямо сейчас:**
+1. `git clone https://github.com/ZhanarBaken/terrasoviet.git && pip install -r requirements.txt`
+2. Открой `pipeline/export.py` — интерфейс готов, нужно добавить Shapefile и превью
+3. Добавь экспорт Shapefile: `gdf.to_file("results/combined.shp", driver="ESRI Shapefile")`
+4. Добавь превью: нарисуй контуры поверх карты и сохрани в `results/preview/`
 
 **Интерфейс уже задан, нужно улучшить + добавить Shapefile.**
 
