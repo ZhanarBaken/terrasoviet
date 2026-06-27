@@ -19,6 +19,28 @@ log = logging.getLogger(__name__)
 
 _HSV_TOL = np.array([12, 60, 60])
 
+# Latin→Cyrillic homoglyph map (common OCR mixup)
+_LAT_TO_CYR = str.maketrans({
+    'A': 'А', 'B': 'В', 'C': 'С', 'E': 'Е', 'H': 'Н', 'I': 'І',
+    'K': 'К', 'M': 'М', 'O': 'О', 'P': 'Р', 'T': 'Т', 'X': 'Х',
+    'U': 'У', 'Y': 'У',
+    'a': 'а', 'c': 'с', 'e': 'е', 'o': 'о', 'p': 'р', 'x': 'х',
+    'y': 'у',
+    '0': 'О',  # digit zero → Cyrillic O
+})
+
+
+def _fix_ocr(text: str) -> str:
+    """Конвертирует латинские буквы-двойники в кириллицу."""
+    if not text:
+        return text
+    # Если текст содержит кириллицу — заменяем латинские двойники
+    has_cyr = bool(re.search(r'[А-Яа-яёЁ]', text))
+    if has_cyr:
+        return text.translate(_LAT_TO_CYR)
+    # Если текст полностью латинский — пробуем транслитерировать
+    return text.translate(_LAT_TO_CYR)
+
 
 def extract_legend(legend_path: str, map_path: str = None,
                    map_rect=None, map_polygon=None,
@@ -142,7 +164,8 @@ def _find_swatches_paddle(img: np.ndarray, debug_dir=None) -> list[dict]:
         # Цвет свотча
         hex_color, lower, upper = _extract_swatch_color(img, rx, ry, rw, rh)
 
-        code_m = re.search(r'[A-Za-zА-Яа-яёЁ][A-Za-z0-9]*', text)
+        text = _fix_ocr(text)
+        code_m = re.search(r'[А-Яа-яёЁ][А-Яа-яёЁA-Za-z0-9]*', text)
         entries.append({
             "name":       text,
             "code":       code_m.group(0) if code_m else "",
