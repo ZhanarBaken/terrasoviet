@@ -1,45 +1,83 @@
-# TerraSoviet Data Rescue
+# TerraSoviet Data Rescue — Трек 2: Векторизация карт
 
-Автоматизированный pipeline для векторизации советских геологических карт.
-Трек 2 — Хакатон TerraSoviet Data Rescue, 24 часа.
-
----
-
-## Что делает pipeline
-
-1. Берёт растровую карту (`map.jpg`) и легенду (`legenda.jpg`)
-2. Геопривязывает карту по угловым координатам
-3. Сегментирует геологические регионы — по **цвету** + **текстовым кодам** внутри (OCR)
-4. Классифицирует каждый регион по легенде (формация, код)
-5. Делит результат по советским листам 1:100 000 (20'×30')
-6. Экспортирует GeoJSON — один файл на лист + `combined.geojson`
+Автоматизированный пайплайн для векторизации советских структурно-формационных карт.
+Вход: растровое изображение карты + легенды. Выход: GeoJSON/SHP с геологическими полигонами.
 
 ---
 
-## Запуск
+## Быстрый старт
 
 ```bash
 pip install -r requirements.txt
+brew install tesseract tesseract-lang   # macOS, для OCR кодов
+# Ubuntu: apt-get install tesseract-ocr tesseract-ocr-rus
 
 python main.py \
-  --map  data/map.jpg \
+  --map    data/map.jpg \
   --legend data/legenda.jpg \
   --output results/ \
-  --bbox 46,69,50,75
+  --bbox   46,69,50,75
 ```
 
 `--bbox` = `lat_min,lon_min,lat_max,lon_max` в WGS84.
-Для нашей карты: `46,69,50,75` (46–50°N, 69–75°E).
 
-Результаты появятся в `results/`:
+---
+
+## Результаты
+
 ```
 results/
-├── combined.geojson      # все объекты вместе
-├── M-43-97.geojson       # по листам 1:100 000
+├── combined.geojson        # все полигоны (312 объектов)
+├── combined.shp            # то же в Shapefile (ESRI)
+├── M-43-97.geojson         # по советским листам 1:100 000
 ├── M-43-98.geojson
-├── ...
-└── errors.log            # что не обработалось (если есть)
+├── ...                     # 144 листа в bbox
+└── errors.log              # что не обработалось
 ```
+
+Каждый объект в GeoJSON:
+```json
+{
+  "type": "Feature",
+  "geometry": { "type": "Polygon", "coordinates": [...] },
+  "properties": {
+    "formation": "Гранитовая (C₁, балхашский комплекс)",
+    "color_hex": "#e8c4a0",
+    "sheet":     "M-43-97"
+  }
+}
+```
+
+---
+
+## Как работает пайплайн
+
+### 1. Геопривязка (`pipeline/georeference.py`)
+- Автоматически обрезает рамку карты (Otsu + контурный анализ, ≤6 вершин)
+- Строит аффинную матрицу пиксель → WGS84 через `rasterio.from_bounds`
+- Точность: ±0.0004° по углам
+
+### 2. Тайловая сетка (`pipeline/tiling.py`)
+- Генерирует советские листы 1:100 000 (20'×30') в пределах bbox
+- Формула номенклатуры: зона 1:1М → лист 12×12 = 144 листа
+- Пример: `(49.5°N, 71.0°E)` → `M-42-95`
+
+### 3. Легенда (`pipeline/legend.py`)
+- Находит цветные образцы в legenda.jpg (HSV saturation > 80)
+- OCR геологических кодов справа от образца (pytesseract)
+- Fallback: KMeans(30) по карте — работает без чистой легенды
+
+### 4. Сегментация — Watershed (`pipeline/segment.py`)
+- Граница = любые тёмные непрерывные линии (порог gray < 80)
+- Цветовые зоны как seeds для Watershed (помощник, не основной критерий)
+- Ч/б карты: distance transform вместо цвета
+- OCR кода внутри каждого региона → fuzzy-match к `data/legend_codes.json` (edit distance ≤ 2)
+- Результат: ~310 регионов (вместо 13 000+ при наивной цветовой сегментации)
+
+### 5. Экспорт (`pipeline/export.py`)
+- Пиксельные контуры → WGS84 полигоны через rasterio
+- Clip по bbox тайла (shapely)
+- GeoJSON + Shapefile
 
 ---
 
@@ -48,125 +86,25 @@ results/
 ```
 terrasoviet/
 ├── data/
-│   ├── map.jpg            # Структурно-Формационная схема 1:500 000
-│   └── legenda.jpg        # Условные обозначения к ней
-├── main.py                # точка входа (CLI)
+│   ├── map.jpg             # Структурно-Формационная схема 1:500 000
+│   ├── legenda.jpg         # Условные обозначения
+│   └── legend_codes.json   # ручной словарь: код → название формации
+├── main.py                 # CLI
 ├── requirements.txt
 └── pipeline/
-    ├── georeference.py    # пиксель ↔ WGS84 (ЗЕЛЁНЫЙ)
-    ├── tiling.py          # советская номенклатура листов (ЗЕЛЁНЫЙ)
-    ├── legend.py          # извлечение палитры из легенды (ЗЕЛЁНЫЙ)
-    ├── segment.py         # сегментация карты (ФИОЛЕТОВЫЙ)
-    └── export.py          # экспорт GeoJSON (ОРАНЖЕВЫЙ)
-```
-
----
-
-## Задачи команды
-
-### ЗЕЛЁНЫЙ — `georeference.py`, `tiling.py`, `legend.py` ✅
-
-**Прямо сейчас:**
-1. Запусти `legend.extract_legend('data/legenda.jpg')` — посмотри сколько цветов нашло и правильные ли названия
-2. Запусти полный pipeline командой ниже — посмотри что выходит в `results/`
-3. Если `combined.geojson` пустой или маленький — значит HSV диапазоны в `legend.py` надо расширить (увеличь `_HSV_TOL`)
-4. Открой `results/combined.geojson` в [geojson.io](https://geojson.io) — полигоны должны лежать в Казахстане
-
-Реализовано:
-- `georeference.build_transform()` — обрезает рамку, строит матрицу пиксель→WGS84 (проверено, углы точные)
-- `tiling.generate_tiles()` — 144 листа 1:100 000 по советской номенклатуре
-- `legend.extract_legend()` — находит цветные образцы в легенде, OCR названий
-
----
-
-### ФИОЛЕТОВЫЙ — `pipeline/segment.py`
-
-**Прямо сейчас:**
-1. `git clone https://github.com/ZhanarBaken/terrasoviet.git && pip install -r requirements.txt`
-2. Открой `pipeline/segment.py` — интерфейс уже задан, логика внутри требует доработки
-3. Запусти тест: `python main.py --map data/map.jpg --legend data/legenda.jpg --output results/ --bbox 46,69,50,75`
-4. Посмотри `results/combined.geojson` на geojson.io — если полигонов мало или они неточные, туни HSV диапазоны в `_clean_mask` и добавь SAM
-
-**Интерфейс уже задан, нужно улучшить логику внутри.**
-
-Функция:
-```python
-def segment_map(image: np.ndarray, legend: list[dict]) -> list[dict]:
-```
-
-Вход:
-- `image` — BGR карта (numpy array) после `georeference.build_transform()`
-- `legend` — список записей из `legend.extract_legend()`, каждая запись:
-  ```python
-  {
-    "name":      "Гранитовая (C₁, балхашский комплекс)",
-    "code":      "C₁",
-    "color_hex": "#ff9a7b",
-    "hsv_lower": [0, 80, 100],   # нижняя граница HSV
-    "hsv_upper": [15, 200, 255], # верхняя граница HSV
-  }
-  ```
-
-Выход:
-```python
-[{
-    "name":      "Гранитовая (C₁, ...)",
-    "color_hex": "#ff9a7b",
-    "contours":  [np.ndarray, ...],  # пиксельные контуры (cv2.findContours формат)
-}]
-```
-
-Текущая реализация (заглушка) — цветовая сегментация через `cv2.inRange` + OCR кода внутри региона.
-**Твоя задача**: подобрать параметры, добавить SAM для уточнения границ, проверить на карте.
-
-Советы:
-- HSV диапазоны легенды могут не точно совпадать с картой — добавь tolerance ±15 по H, ±80 по S/V
-- Маленькие контуры (< 200 px²) выбрасывать
-- `cv2.approxPolyDP(c, epsilon=3, closed=True)` — упрощение контуров
-
----
-
-### ОРАНЖЕВЫЙ — `pipeline/export.py`
-
-**Прямо сейчас:**
-1. `git clone https://github.com/ZhanarBaken/terrasoviet.git && pip install -r requirements.txt`
-2. Открой `pipeline/export.py` — интерфейс готов, нужно добавить Shapefile и превью
-3. Добавь экспорт Shapefile: `gdf.to_file("results/combined.shp", driver="ESRI Shapefile")`
-4. Добавь превью: нарисуй контуры поверх карты и сохрани в `results/preview/`
-
-**Интерфейс уже задан, нужно улучшить + добавить Shapefile.**
-
-Функция:
-```python
-def export_tiles(segments, transform, tiles, output_dir):
-```
-
-Вход:
-- `segments` — из `segment.segment_map()`
-- `transform` — Affine объект из `georeference.build_transform()`
-- `tiles` — список `[{"name": "M-43-97", "bbox": (lat_min, lon_min, lat_max, lon_max)}, ...]`
-- `output_dir` — куда писать
-
-Текущий выход: GeoJSON на каждый лист + `combined.geojson`.
-**Твоя задача**:
-1. Добавить экспорт Shapefile (через `geopandas.to_file(..., driver='ESRI Shapefile')`)
-2. Добавить overlay визуализацию (карта + маски) в `results/preview/`
-3. Убедиться что `errors.log` пишется при любой ошибке
-
-Properties в каждом GeoJSON Feature:
-```json
-{
-  "formation": "Гранитовая (C₁, балхашский комплекс)",
-  "color_hex": "#ff9a7b",
-  "sheet":     "M-43-97"
-}
+    ├── georeference.py
+    ├── tiling.py
+    ├── legend.py
+    ├── segment.py
+    └── export.py
 ```
 
 ---
 
 ## Советские листы 1:100 000
 
-Карта охватывает 4 квадранта 1:500 000:
+Карта покрывает 4 квадранта 1:500 000 (суммарно 4°×6°):
+
 | Квадрант | Широта | Долгота |
 |---|---|---|
 | M-42-Г | 48–50°N | 69–72°E |
@@ -174,8 +112,7 @@ Properties в каждом GeoJSON Feature:
 | L-42-Б | 46–48°N | 69–72°E |
 | L-43-А | 46–48°N | 72–75°E |
 
-В каждом квадранте — 36 листов 1:100 000. Итого: **144 листа**.
-Размер листа: 20' широты × 30' долготы.
+В каждом квадранте 36 листов 1:100 000. Итого **144 листа**.
 
 ---
 
@@ -187,26 +124,21 @@ numpy>=1.24.0
 shapely>=2.0.0
 geopandas>=0.14.0
 pyproj>=3.6.0
-pytesseract>=0.3.10    # нужен Tesseract + rus языковой пакет
+pytesseract>=0.3.10
 Pillow>=10.0.0
 scikit-learn>=1.3.0
 rasterio>=1.3.0
 ```
 
-Установка Tesseract (macOS):
-```bash
-brew install tesseract tesseract-lang
-```
-
-Установка Tesseract (Ubuntu):
-```bash
-apt-get install tesseract-ocr tesseract-ocr-rus
-```
-
 ---
 
-## Дедлайн
+## Масштабируемость
 
-Заморозка кода в **12:00**. После — никаких коммитов.
-Судьи клонируют репо и запускают `python main.py --map ... --legend ... --output ... --bbox ...` на своём датасете.
-**Никаких хардкод путей в коде.**
+Пайплайн не привязан к конкретным файлам — все пути через аргументы CLI:
+
+```bash
+python main.py --map другая_карта.jpg --legend другая_легенда.jpg \
+               --output out/ --bbox 44,65,48,71
+```
+
+Работает с любой советской геологической картой, где известны угловые координаты.

@@ -75,6 +75,9 @@ def export_tiles(
     # Общий файл
     _save_geojson(all_features, os.path.join(output_dir, "combined.geojson"))
 
+    # Shapefile (опционально, если geopandas доступен)
+    _save_shapefile(all_features, os.path.join(output_dir, "combined.shp"))
+
     # Лог ошибок
     if errors:
         with open(os.path.join(output_dir, "errors.log"), "w") as f:
@@ -102,6 +105,24 @@ def _find_tile(lon: float, lat: float, tiles: list[dict]) -> str:
         if lon_min <= lon <= lon_max and lat_min <= lat <= lat_max:
             return tile["name"]
     return "unknown"
+
+
+def _save_shapefile(features: list, path: str) -> None:
+    try:
+        import geopandas as gpd
+        from shapely.geometry import shape
+
+        if not features:
+            return
+        gdf = gpd.GeoDataFrame(
+            [f["properties"] for f in features],
+            geometry=[shape(f["geometry"]) for f in features],
+            crs="EPSG:4326",
+        )
+        gdf.to_file(path, driver="ESRI Shapefile", encoding="utf-8")
+        log.info(f"Shapefile: {path}")
+    except Exception as e:
+        log.warning(f"Shapefile не сохранён: {e}")
 
 
 def _save_geojson(features: list, path: str) -> None:
