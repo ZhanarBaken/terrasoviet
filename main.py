@@ -31,7 +31,7 @@ def run(args) -> None:
         sys.exit(1)
 
     log.info("1/5 Геопривязка карты...")
-    map_image, transform = georeference.build_transform(args.map, args.bbox)
+    map_image, transform = georeference.build_transform(args.map, args.bbox, args.output)
 
     log.info("2/5 Генерация тайловой сетки...")
     tiles = tiling.generate_tiles(args.bbox)

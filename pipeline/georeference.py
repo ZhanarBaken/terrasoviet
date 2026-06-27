@@ -1,9 +1,14 @@
+import logging
+import os
+
 import cv2
 import numpy as np
 from rasterio.transform import from_bounds, xy as rio_xy
 
+log = logging.getLogger(__name__)
 
-def build_transform(image_path: str, bbox: tuple):
+
+def build_transform(image_path: str, bbox: tuple, output_dir: str = None):
     """
     Строит аффинное преобразование пиксель → WGS84.
 
@@ -14,7 +19,17 @@ def build_transform(image_path: str, bbox: tuple):
     if img is None:
         raise FileNotFoundError(f"Не удалось загрузить: {image_path}")
 
-    img = _crop_map_border(img)
+    img, border_vis = _crop_map_border(img)
+
+    if output_dir and border_vis is not None:
+        os.makedirs(output_dir, exist_ok=True)
+        preview_path = os.path.join(output_dir, "border_detection.jpg")
+        h, w = border_vis.shape[:2]
+        scale = min(1.0, 1200 / max(h, w))
+        small = cv2.resize(border_vis, (int(w * scale), int(h * scale)))
+        cv2.imwrite(preview_path, small, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        log.info(f"    Рамка карты: {preview_path}")
+
     h, w = img.shape[:2]
     lat_min, lon_min, lat_max, lon_max = bbox
 
@@ -32,10 +47,11 @@ def pixel_to_coord(row: int, col: int, transform) -> tuple[float, float]:
     return float(lon), float(lat)
 
 
-def _crop_map_border(img: np.ndarray) -> np.ndarray:
+def _crop_map_border(img: np.ndarray):
     """
     Находит внутреннюю рамку карты и обрезает по ней.
     Использует Otsu-порог + поиск прямоугольного контура.
+    Возвращает (cropped_img, debug_vis).
     """
     h, w = img.shape[:2]
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -46,7 +62,7 @@ def _crop_map_border(img: np.ndarray) -> np.ndarray:
 
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
-        return img
+        return img, None
 
     best_rect = None
     best_area = 0
@@ -61,7 +77,14 @@ def _crop_map_border(img: np.ndarray) -> np.ndarray:
             best_area = area
 
     if best_rect is None:
-        return img
+        return img, None
 
     x, y, cw, ch = cv2.boundingRect(best_rect)
-    return img[y:y + ch, x:x + cw]
+    log.info(f"    Рамка карты: ({x},{y}) → {cw}×{ch}px из {w}×{h}px")
+
+    # Визуализация для отчёта
+    vis = img.copy()
+    cv2.rectangle(vis, (x, y), (x + cw, y + ch), (0, 200, 0), max(4, w // 500))
+    cv2.polylines(vis, [best_rect], True, (0, 0, 255), max(2, w // 800))
+
+    return img[y:y + ch, x:x + cw], vis
