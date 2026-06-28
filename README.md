@@ -23,7 +23,7 @@
 
 | Файл | Описание |
 |---|---|
-| `output/combined.geojson` | Все геологические полигоны в одном GeoJSON (4079 объектов для тестовой карты) |
+| `output/combined.geojson` | Все геологические полигоны в одном GeoJSON. Содержит `fill` для отображения цветов на geojson.io |
 | `output/combined.shp` | То же самое в формате Shapefile (ESRI) |
 | `tiles/<лист>.geojson` | Полигоны разбитые по советским листам 1:100 000 (144 файла) |
 | `debug/border_detection.jpg` | Визуализация найденной границы карты |
@@ -36,7 +36,10 @@
 {
   "formation": "Гранитовая",   // название формации из легенды
   "color_hex": "#e8c4a0",      // цвет свотча
-  "sheet": "M-43-97"           // советский лист 1:100 000
+  "sheet": "M-43-97",          // советский лист 1:100 000
+  "fill": "#e8c4a0",           // для geojson.io (simplestyle)
+  "fill-opacity": 0.7,
+  "stroke-width": 0
 }
 ```
 
@@ -173,7 +176,10 @@ results/
   "properties": {
     "formation": "Гранитовая",
     "color_hex": "#e8c4a0",
-    "sheet":     "M-43-97"
+    "sheet":     "M-43-97",
+    "fill":      "#e8c4a0",
+    "fill-opacity": 0.7,
+    "stroke-width": 0
   }
 }
 ```
