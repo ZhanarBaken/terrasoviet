@@ -60,9 +60,16 @@ def build_transform(image_path: str, bbox: tuple, output_dir: str = None,
                     [cv2.IMWRITE_JPEG_QUALITY, 90])
         log.info(f"    Визуализация рамки → {vis_path}")
 
-    h, w = cropped.shape[:2]
+    h_full, w_full = img.shape[:2]
     lat_min, lon_min, lat_max, lon_max = bbox
-    transform = from_bounds(lon_min, lat_min, lon_max, lat_max, w, h)
+    bx, by, bw, bh = map_rect
+
+    crop_lon_min = lon_min + (bx / w_full) * (lon_max - lon_min)
+    crop_lon_max = lon_min + ((bx + bw) / w_full) * (lon_max - lon_min)
+    crop_lat_max = lat_max - (by / h_full) * (lat_max - lat_min)
+    crop_lat_min = lat_max - ((by + bh) / h_full) * (lat_max - lat_min)
+
+    transform = from_bounds(crop_lon_min, crop_lat_min, crop_lon_max, crop_lat_max, bw, bh)
     return cropped, transform, map_rect, polygon
 
 

@@ -61,6 +61,9 @@ def export_tiles(
                         "formation": seg["name"],
                         "color_hex": seg["color_hex"],
                         "sheet": tile_name,
+                        "fill": seg["color_hex"],
+                        "fill-opacity": 0.7,
+                        "stroke-width": 0,
                     },
                 }
                 all_features.append(feature)
