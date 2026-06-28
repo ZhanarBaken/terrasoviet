@@ -40,7 +40,10 @@ def build_transform(image_path: str, bbox: tuple, output_dir: str = None):
 
     log.info(f"    Изображение: {img.shape[1]}×{img.shape[0]}px")
 
-    cropped, map_rect, vis, polygon = find_map_border(img)
+    # Ищем polygon_points.txt рядом с картой
+    pts_path = os.path.join(os.path.dirname(os.path.abspath(image_path)),
+                            "polygon_points.txt")
+    cropped, map_rect, vis, polygon = find_map_border(img, pts_path)
 
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
@@ -63,22 +66,45 @@ def pixel_to_coord(row: int, col: int, transform) -> tuple[float, float]:
     return float(lon), float(lat)
 
 
-def find_map_border(img: np.ndarray):
+def find_map_border(img: np.ndarray, pts_path: str = None):
     """
-    Находит рамку карты — многоугольник из длинных прямых линий.
+    Находит рамку карты.
 
-    Пробует два метода:
-      1. Яркостной профиль (row/col mean) → переход от светлого поля к карте
-      2. Морф. фильтрация Canny-рёбер (если нет чёткого светлого поля)
-
-    Рамка может иметь 4+ углов.
+    Если рядом с картой есть polygon_points.txt — использует ручные точки
+    (первый запуск: открывает окно для кликов, сохраняет файл).
+    Иначе — автодетекция по яркостному профилю / морфологии.
 
     Возвращает: (cropped_img, (x, y, w, h), debug_vis, polygon)
     """
     h, w = img.shape[:2]
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    log.info(f"    Детекция рамки ({w}×{h}px)")
+    # ── Ручной кроп через клики (как check_border.py) ─────────────────────
+    if pts_path:
+        points = _load_or_click_polygon(img, pts_path)
+        if points and len(points) >= 3:
+            poly = np.array(points, dtype=np.int32)
+
+            mask = np.zeros((h, w), np.uint8)
+            cv2.fillPoly(mask, [poly], 255)
+
+            out = img.copy()
+            out[mask == 0] = (255, 255, 255)
+
+            bx, by, bw, bh = cv2.boundingRect(poly)
+            cropped = out[by:by + bh, bx:bx + bw]
+
+            vis = img.copy()
+            thick = max(3, min(w, h) // 400)
+            cv2.polylines(vis, [poly], True, (0, 220, 0), thick * 2)
+
+            polygon = [(int(p[0]), int(p[1])) for p in points]
+            map_rect = (bx, by, bw, bh)
+            log.info(f"    Рамка: x={bx} y={by} {bw}×{bh}px, углов={len(polygon)}")
+            return cropped, map_rect, vis, polygon
+
+    # ── Автодетекция ───────────────────────────────────────────────────────
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    log.info(f"    Автодетекция рамки ({w}×{h}px)")
 
     # ── Метод А: Hough — длинные прямые линии (универсальный) ────────────
     y_top, y_bot, x_lft, x_rgt = _border_by_hough(gray, w, h)
@@ -137,6 +163,74 @@ def find_map_border(img: np.ndarray):
         return img, (0, 0, w, h), vis, [(0, 0), (w, 0), (w, h), (0, h)]
 
     return cropped, map_rect, vis, polygon
+
+
+# ── Ручной кроп ───────────────────────────────────────────────────────────
+
+def _load_or_click_polygon(img: np.ndarray, pts_path: str) -> list:
+    """
+    Если pts_path существует — читает точки из файла.
+    Иначе — открывает интерактивное окно (как check_border.py),
+    пользователь кликает углы, точки сохраняются в pts_path.
+    """
+    if os.path.exists(pts_path):
+        points = []
+        with open(pts_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                x_s, y_s = line.split()
+                points.append((int(x_s), int(y_s)))
+        if len(points) >= 3:
+            log.info(f"    Загружены точки из {pts_path}: {len(points)} углов")
+            return points
+
+    # Интерактивный режим
+    import matplotlib.pyplot as plt
+
+    H, W = img.shape[:2]
+    DISPLAY_MAX = 1400
+    scale = DISPLAY_MAX / max(W, H)
+    disp_w, disp_h = int(W * scale), int(H * scale)
+    disp = cv2.cvtColor(cv2.resize(img, (disp_w, disp_h)), cv2.COLOR_BGR2RGB)
+
+    points = []
+
+    fig, ax = plt.subplots(figsize=(14, 14 * H / W))
+    ax.imshow(disp)
+    ax.set_title(
+        "Кликай углы карты по периметру (обходи врезки/легенду).\n"
+        "Замыкать не нужно — закрой окно когда обвела всё."
+    )
+
+    def on_click(event):
+        if event.xdata is None or event.button != 1:
+            return
+        x = int(event.xdata / scale)
+        y = int(event.ydata / scale)
+        points.append((x, y))
+        ax.plot(event.xdata, event.ydata, "ro", markersize=6)
+        if len(points) > 1:
+            px = [p[0] * scale for p in points]
+            py = [p[1] * scale for p in points]
+            ax.plot(px[-2:], py[-2:], "r-", linewidth=1.5)
+        fig.canvas.draw_idle()
+
+    fig.canvas.mpl_connect("button_press_event", on_click)
+    plt.tight_layout()
+    plt.show()
+
+    if len(points) < 3:
+        log.warning("    Меньше 3 точек — пропускаем ручной кроп")
+        return []
+
+    with open(pts_path, "w", encoding="utf-8") as f:
+        f.write("# углы полигона в пикселях исходной карты (x y)\n")
+        for x, y in points:
+            f.write(f"{x} {y}\n")
+    log.info(f"    Сохранено {len(points)} точек → {pts_path}")
+    return points
 
 
 # ── Методы детекции ────────────────────────────────────────────────────────

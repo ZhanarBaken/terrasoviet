@@ -72,6 +72,7 @@ def run(args) -> None:
         enhanced_map, bbox, debug_dir
     )
     log.info(f"    Карта обрезана: {map_image.shape[1]}×{map_image.shape[0]}px")
+    _save_tiles_grid(debug_dir, bbox, tiles)
 
     # ── Шаг 5: Извлечение легенды ─────────────────────────────────────────
     log.info("═" * 60)
@@ -111,6 +112,35 @@ def run(args) -> None:
     log.info(f"    Результаты → {args.output}/")
     log.info("═" * 60)
     log.info("ГОТОВО")
+
+
+def _save_tiles_grid(debug_dir: str, bbox: tuple, tiles: list) -> None:
+    import cv2, numpy as np, os
+    border_path = os.path.join(debug_dir, "border_detection.jpg")
+    if not os.path.exists(border_path):
+        return
+    img = cv2.imread(border_path)
+    if img is None:
+        return
+    h, w = img.shape[:2]
+    lat_min, lon_min, lat_max, lon_max = bbox
+
+    def to_px(lat, lon):
+        x = int((lon - lon_min) / (lon_max - lon_min) * w)
+        y = int((lat_max - lat) / (lat_max - lat_min) * h)
+        return x, y
+
+    lats = sorted({t["bbox"][0] for t in tiles} | {t["bbox"][2] for t in tiles})
+    lons = sorted({t["bbox"][1] for t in tiles} | {t["bbox"][3] for t in tiles})
+
+    for lat in lats:
+        cv2.line(img, to_px(lat, lon_min), to_px(lat, lon_max), (0, 0, 200), 1)
+    for lon in lons:
+        cv2.line(img, to_px(lat_max, lon), to_px(lat_min, lon), (0, 0, 200), 1)
+
+    out = os.path.join(debug_dir, "tiles_grid.jpg")
+    cv2.imwrite(out, img, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    log.info(f"    Сетка тайлов → {out}")
 
 
 if __name__ == "__main__":
