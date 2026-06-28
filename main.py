@@ -67,9 +67,12 @@ def run(args) -> None:
 
     # ── Шаг 4: Детекция границы карты ────────────────────────────────────
     log.info("═" * 60)
-    log.info("ШАГ 4 — Детекция границы карты (OpenCV)")
+    if args.crop:
+        log.info("ШАГ 4 — Граница карты: интерактивный кроп (--crop)")
+    else:
+        log.info("ШАГ 4 — Граница карты: автодетекция")
     map_image, transform, map_rect, polygon = georeference.build_transform(
-        enhanced_map, bbox, debug_dir
+        enhanced_map, bbox, debug_dir, interactive=args.crop
     )
     log.info(f"    Карта обрезана: {map_image.shape[1]}×{map_image.shape[0]}px")
     _save_tiles_grid(debug_dir, bbox, tiles)
@@ -154,4 +157,8 @@ if __name__ == "__main__":
                         metavar="M-43-В,M-42-Г,...",
                         help="Советские номенклатурные листы через запятую")
     parser.add_argument("--output", required=True, help="Папка для GeoJSON/SHP")
+    parser.add_argument("--crop", action="store_true",
+                        help="Интерактивный кроп границы карты: открывает окно "
+                             "для разметки кликами, сохраняет data/polygon_points.txt. "
+                             "Без флага — автодетекция по яркостному профилю.")
     run(parser.parse_args())

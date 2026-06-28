@@ -28,9 +28,13 @@ from rasterio.transform import from_bounds, xy as rio_xy
 log = logging.getLogger(__name__)
 
 
-def build_transform(image_path: str, bbox: tuple, output_dir: str = None):
+def build_transform(image_path: str, bbox: tuple, output_dir: str = None,
+                    interactive: bool = False):
     """
     Загружает изображение, находит рамку карты, строит аффинную геопривязку.
+
+    interactive=True  → читает/создаёт data/polygon_points.txt (клики пользователя)
+    interactive=False → автодетекция по яркостному профилю / морфологии
 
     Возвращает: (cropped_img, rasterio_transform, map_rect, polygon)
     """
@@ -40,9 +44,10 @@ def build_transform(image_path: str, bbox: tuple, output_dir: str = None):
 
     log.info(f"    Изображение: {img.shape[1]}×{img.shape[0]}px")
 
-    # Ищем polygon_points.txt рядом с картой
-    pts_path = os.path.join(os.path.dirname(os.path.abspath(image_path)),
-                            "polygon_points.txt")
+    pts_path = None
+    if interactive:
+        pts_path = os.path.join(os.path.dirname(os.path.abspath(image_path)),
+                                "polygon_points.txt")
     cropped, map_rect, vis, polygon = find_map_border(img, pts_path)
 
     if output_dir:
