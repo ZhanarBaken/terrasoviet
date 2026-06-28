@@ -67,12 +67,12 @@ def run(args) -> None:
 
     # ── Шаг 4: Детекция границы карты ────────────────────────────────────
     log.info("═" * 60)
-    if args.crop:
-        log.info("ШАГ 4 — Граница карты: интерактивный кроп (--crop)")
+    if args.no_crop:
+        log.info("ШАГ 4 — Граница карты: автодетекция (--no-crop)")
     else:
-        log.info("ШАГ 4 — Граница карты: автодетекция")
+        log.info("ШАГ 4 — Граница карты: интерактивный кроп")
     map_image, transform, map_rect, polygon = georeference.build_transform(
-        enhanced_map, bbox, debug_dir, interactive=args.crop
+        enhanced_map, bbox, debug_dir, interactive=not args.no_crop
     )
     log.info(f"    Карта обрезана: {map_image.shape[1]}×{map_image.shape[0]}px")
     _save_tiles_grid(debug_dir, bbox, tiles)
@@ -157,8 +157,8 @@ if __name__ == "__main__":
                         metavar="M-43-В,M-42-Г,...",
                         help="Советские номенклатурные листы через запятую")
     parser.add_argument("--output", required=True, help="Папка для GeoJSON/SHP")
-    parser.add_argument("--crop", action="store_true",
-                        help="Интерактивный кроп границы карты: открывает окно "
-                             "для разметки кликами, сохраняет data/polygon_points.txt. "
-                             "Без флага — автодетекция по яркостному профилю.")
+    parser.add_argument("--no-crop", action="store_true",
+                        help="Автодетекция границы карты по яркостному профилю. "
+                             "По умолчанию открывается интерактивное окно для "
+                             "разметки кликами (сохраняется data/polygon_points.txt).")
     run(parser.parse_args())
