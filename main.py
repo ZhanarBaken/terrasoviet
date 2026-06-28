@@ -44,7 +44,12 @@ def run(args) -> None:
     # ── Шаг 1: Номенклатурные листы → координаты углов ────────────────────
     log.info("═" * 60)
     log.info("ШАГ 1 — Номенклатурные листы → координаты углов")
-    sheet_names = [s.strip() for s in args.sheets.split(",") if s.strip()]
+    if args.sheets.endswith(".json"):
+        import json as _json
+        with open(args.sheets, encoding="utf-8") as _f:
+            sheet_names = _json.load(_f)["sheets"]
+    else:
+        sheet_names = [s.strip() for s in args.sheets.split(",") if s.strip()]
     bbox = tiling.sheets_to_bbox(sheet_names)
     log.info(f"    Листы: {sheet_names}")
     log.info(f"    BBox (lat_min, lon_min, lat_max, lon_max): {bbox}")
